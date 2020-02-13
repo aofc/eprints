@@ -1001,7 +1001,7 @@ sub handler
 
 	my $user = $repo->current_user;
 
-	my( $rc, $owner ) = on_behalf_of( $repo, $r, $user );
+	my( $rc, $owner ) = $self->on_behalf_of( $user );
 	return $rc if $rc != OK;
 
 	# Subject URI's redirect to the top of that particular subject tree
@@ -1267,18 +1267,27 @@ sub GET
 	elsif( $self->scope == CRUD_SCOPE_DATAOBJ )
 	{
 		return HTTP_NOT_FOUND if !defined $dataobj;
-
-		# user wants HTML and there is a static page available
-		my $url = ($dataset->base_id eq "eprint" && $dataset->id ne "archive") ?
-				$dataobj->get_control_url :
-				$dataobj->get_url;
-		if( $plugin->get_subtype eq "SummaryPage" )
+		if ( $repo->config("use_long_url_format") &&  ($dataset->base_id eq "file") ) 
 		{
-			if( defined( $url ) && $url ne $dataobj->uri )
-			{
-				return EPrints::Apache::Rewrite::redir_see_other( $r, $url );
-			}
-		}
+            ##  redirect /id/file/234  to  /id/eprint/23/1.pdf (part of the 84_sword.pl test) when use_long_url_format is turned on, instead of the summary page of the file dataobj.
+            my $url = $dataobj->get_url;
+            if( defined( $url ) && $url ne $dataobj->uri )
+            {
+                return EPrints::Apache::Rewrite::redir_see_other( $r, $url );
+            }
+        }
+
+        # user wants HTML and there is a static page available
+        my $url = ($dataset->base_id eq "eprint" && $dataset->id ne "archive") ?
+                $dataobj->get_control_url :
+                $dataobj->get_url;
+        if( $plugin->get_subtype eq "SummaryPage" )
+        {
+            if( defined( $url ) && $url ne $dataobj->uri )
+            {
+                return EPrints::Apache::Rewrite::redir_see_other( $r, $url );
+            }
+        }
 
 		# set Last-Modified header for individual objects
 		if( my $field = $dataset->get_datestamp_field() )
@@ -1729,12 +1738,15 @@ sub servicedocument
 
 	my $user = $repo->current_user;
 	EPrints->abort( "unprotected" ) if !defined $user; # Rewrite foobar
-	my $on_behalf_of = on_behalf_of( $repo, $r, $user );
-	if( $on_behalf_of->{status} != OK )
+	my ( $status, $on_behalf_of ) = $self->on_behalf_of( $user );
+	if( $status != OK )
 	{
-		return sword_error( $repo, $r, %$on_behalf_of );
-	}
-	$on_behalf_of = $on_behalf_of->{on_behalf_of};
+		return $self->sword_error(
+                	status => HTTP_FORBIDDEN,
+	                href => "http://purl.org/net/sword/error/TargetOwnerUnknown",
+        	        summary => "Target user unknown or no permission to act on-behalf-of",
+		);
+        }
 
 # SERVICE and WORKSPACE DEFINITION
 
@@ -1819,7 +1831,7 @@ sub servicedocument
 
 	return $self->send_response(
 		OK,
-		'application/xtomsvc+xml; charset=utf-8',
+		'application/atomsvc+xml; charset=utf-8',
 		$content
 	);
 }
@@ -1828,13 +1840,10 @@ sub servicedocument
 
 sub on_behalf_of
 {
-	my( $repo, $r, $user ) = @_;
-
-	my $err = {
-		status => HTTP_FORBIDDEN,
-		href => "http://purl.org/net/sword/error/TargetOwnerUnknown",
-		summary => "Target user unknown or no permission to act on-behalf-of",
-	};
+	my( $self, $user ) = @_;
+	
+	my $repo = $self->repository;
+	my $r = $self->request; 
 
 	my $on_behalf_of =
 		$r->headers_in->{'On-Behalf-Of'} || # SWORD 2.0
@@ -1844,9 +1853,9 @@ sub on_behalf_of
 
 	my $owner = $repo->user_by_username( $on_behalf_of );
 
-	return sword_error($repo, $r, %$err )
+	return ( HTTP_FORBIDDEN, undef )
 		if !defined $owner;
-	return sword_error($repo, $r, %$err ) 
+	return ( HTTP_FORBIDDEN, undef )
 		if !$user->allow( "user/mediate", $owner );
 
 	return( OK, $owner );

@@ -56,6 +56,20 @@ Or, per view:
 
 To disable the limit set C<max_items> to 0.
 
+=head1 GENERATING LARGE VIEWS
+
+By default views will get regenerated if they are older than 24 hours when requested. For large repositories views can take a long time to generate.
+
+If a view takes more than 24hours to generate, you may want to make the regeneration period longer:
+
+	$c->{browse_views} = [{
+		...
+		max_menu_age => 10*24*60*60, #10 days
+		max_list_age => 10*24*60*60, #10 days
+	}];
+
+These values should be set in relation to any scheduling of ~/bin/generate_views via cron. 
+
 =head1 OPTIONS
 
 =over 4
@@ -1496,12 +1510,12 @@ sub render_menu
 
 		my $li = $repo->make_element( "li" );
 
-		my $xhtml_value = $fields->[0]->get_value_label( $repo, $value ); 
 		my $null_phrase_id = "viewnull_".$ds->base_id()."_".$view->{id};
-		if( !EPrints::Utils::is_set( $value ) )
+		if( !$repo->get_lang->has_phrase( $null_phrase_id ) )
 		{
-			$xhtml_value = $repo->html_phrase( $null_phrase_id );
+			$null_phrase_id = 'Update/Views:no_value';
 		}
+		my $xhtml_value = $fields->[0]->get_value_label( $repo, $value, fallback_phrase => $null_phrase_id ); 
 
 		if( defined $sizes && (!defined $sizes->{$fileid} || $sizes->{$fileid} == 0 ))
 		{
@@ -1768,16 +1782,33 @@ sub group_items
 		my $values = $field->get_value( $item );
 		if( !$field->get_property( "multiple" ) )
 		{
-			$values = [$values];
+			if( EPrints::Utils::is_set( $values ) )
+			{
+				$values = [$values];
+			}
+			elsif( $opts->{allow_null} )
+			{
+				$values = [$field->empty_value];
+			}
+			else
+			{
+				next;
+			}
 		}
 		elsif( !scalar(@$values) )
 		{
-			$values = [$field->empty_value];
+			if( $opts->{allow_null} )
+			{
+				$values = [$field->empty_value];
+			}
+			else
+			{
+				next;
+			}
 		}
-		next if !$opts->{allow_null} && !EPrints::Utils::is_set( $values );
 		VALUE: foreach my $value ( @$values )
 		{
-			next VALUE unless EPrints::Utils::is_set( $value );
+			next VALUE unless EPrints::Utils::is_set( $value ) || $opts->{allow_null};
 			if( $opts->{tags} )
 			{
 				$value =~ s/\.$//;
@@ -1887,7 +1918,7 @@ sub render_array_of_eprints
 	}
 	elsif( defined $view->{layout} && $view->{layout} eq "unorderedlist" )
 	{
-		$frag = $xml->create_element( "ol" );
+		$frag = $xml->create_element( "ul" );
 	}
 	else
 	{
@@ -1965,7 +1996,7 @@ sub get_view_opts
 	if( $opts->{"cloud"} )
 	{
 		$opts->{"jump"} = "plain";
-		$opts->{"no_seperator"} = 1;
+		$opts->{"no_seperator"} = 1 unless defined $opts->{"seperator"}; #[sic]
 		$opts->{"cloudmin"} = 80 unless defined $opts->{"cloudmin"};
 		$opts->{"cloudmax"} = 200 unless defined $opts->{"cloudmax"};
 	}

@@ -323,6 +323,7 @@ sub create_from_data
 	if( defined $eprint && !$eprint->under_construction )
 	{
 		local $eprint->{non_volatile_change} = 1;
+		$eprint->set_value( "fileinfo", $eprint->fileinfo );
 		$eprint->commit( 1 );
 	}
 
@@ -594,7 +595,13 @@ sub get_url
 	my $path = $self->file_path( $file );
 	return undef if !defined $path;
 
-	return $self->{session}->config( "http_url" ) . "/" . $path;
+	my $url = $self->{session}->config( "http_url" ) . "/";
+
+	$url .= 'id/eprint/' if $self->{session}->get_conf( "use_long_url_format");
+
+	$url .= $path;
+
+	return $url;
 }
 
 
@@ -1728,6 +1735,10 @@ Show thumbnail/preview only on public docs.
 
 Show thumbnail/preview on all docs if poss.
 
+=item with_link => 0
+
+Do not link.
+
 =back
 
 =cut
@@ -1737,6 +1748,7 @@ sub render_icon_link
 	my( $self, %opts ) = @_;
 
 	$opts{public} = 1 unless defined $opts{public};
+	$opts{with_link} = 1 unless defined $opts{with_link};
 	if( $opts{public} && !$self->is_public )
 	{
 		$opts{preview} = 0;
@@ -1769,15 +1781,23 @@ sub render_icon_link
 		$aopts{onmouseover} = "EPJS_ShowPreview( event, '$preview_id' );";
 		$aopts{onmouseout} = "EPJS_HidePreview( event, '$preview_id' );";
 	}
-	my $a = $self->{session}->make_element( "a", %aopts );
-	$a->appendChild( $self->{session}->make_element( 
-		"img", 
+	my $f = $self->{session}->make_doc_fragment;
+	my $img = $self->{session}->make_element(
+		"img",
 		class=>"ep_doc_icon",
 		alt=>"[img]",
 		src=>$self->icon_url( public=>$opts{public} ),
-		border=>0 ));
-	my $f = $self->{session}->make_doc_fragment;
-	$f->appendChild( $a ) ;
+		border=>0 );
+	if ( $opts{with_link} )
+	{
+		my $a = $self->{session}->make_element( "a", %aopts );
+		$a->appendChild( $img );
+		$f->appendChild( $a );
+	}
+	else
+	{
+		$f->appendChild( $img );
+	}
 	if( $opts{preview} )
 	{
 		my $preview = $self->{session}->make_element( "div",
@@ -2213,20 +2233,28 @@ sub permit
 		my $r;
 		if( defined $user )
 		{
-			$r = $self->{session}->call( "can_user_view_document",
-					$self,
-					$user
-				);
+			# In case user-defined "can_user_view_document" call is invalid evaluate and abort if an error.
+			eval {
+				$r = $self->{session}->call( "can_user_view_document",
+						$self,
+						$user
+					);
+			};
+			EPrints->abort( "can_user_view_document call caused an error" ) if $@;
 			return 1 if $r eq "ALLOW";
 			return 0 if $r eq "DENY";
 			EPrints->abort( "can_user_view_document returned '$r': expected ALLOW or DENY" );
 		}
 		else
 		{
-			$r = $self->{session}->call( "can_request_view_document",
-					$self,
-					$self->{session}->{request}
-				);
+			# In case user-defined "can_request_view_document" call is invalid evaluate and abort if an error.
+			eval {
+				$r = $self->{session}->call( "can_request_view_document",
+						$self,
+						$self->{session}->{request}
+					);
+			};
+			EPrints->abort( 'can_request_view_document call caused an error. Hint: is security.pl still using $r->connection()->remote_ip();' ) if $@;
 			return 1 if $r eq "ALLOW";
 			return 0 if $r eq "DENY" || $r eq "USER";
 			EPrints->abort( "can_request_view_document returned '$r': expected ALLOW, DENY or USER" );

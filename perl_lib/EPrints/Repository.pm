@@ -383,7 +383,7 @@ sub param
                 my $value = ( $self->{query}->param( $name ) );
                 if( EPrints::Utils::is_set( $value ) )
                 {
-                        utf8::decode($value);
+                        utf8::decode($value) if EPrints::Utils::is_set( $value );
                 }
 
                 return $value;
@@ -394,7 +394,14 @@ sub param
 
         if( defined $name )
         {
-                @result = $self->{query}->multi_param( $name );
+                if( $self->{query}->can('multi_param') ) ##Github #391 System running older version of CGI do not have multi_param. Check before calling. #Code by Patrick McSweeney
+                {
+                       @result = $self->{query}->multi_param( $name );
+                }
+                else
+                {
+                       @result = $self->{query}->param( $name );
+                }
         }
         else
         {

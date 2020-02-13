@@ -8,6 +8,8 @@ package EPrints::Plugin::Import::PubMedID;
 
 use strict;
 
+# Updated to use HTTPS, XML parser also needed updating as it doesnt support HTTPS.  Note that you must also have LWP::Protocol::https instaled.
+# jb4/09nov2016
 
 use EPrints::Plugin::Import;
 use URI;
@@ -24,7 +26,7 @@ sub new
 	$self->{visible} = "all";
 	$self->{produce} = [ 'list/eprint', 'dataobj/eprint' ];
 
-	$self->{EFETCH_URL} = 'http://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&retmode=xml&rettype=full';
+	$self->{EFETCH_URL} = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&retmode=xml&rettype=full';
 
 	return $self;
 }
@@ -55,7 +57,22 @@ sub input_fh
 		my $url = URI->new( $plugin->{EFETCH_URL} );
 		$url->query_form( $url->query_form, id => $pmid );
 
-		my $xml = EPrints::XML::parse_url( $url );
+		my $req = HTTP::Request->new("GET", $url);
+		$req->header( "Accept" => "text/xml" );
+		$req->header( "Accept-Charset" => "utf-8" );
+
+		my $ua = LWP::UserAgent->new;
+		my $resp = $ua->request( $req );
+
+		if( $resp->code != 200 )
+		{
+			$plugin->warning( "Could not connect to remote site: $url (".$resp->code.")" );
+			next;
+		}
+
+		my $parser = XML::LibXML->new();
+		my $xml = $parser->parse_string( $resp->content );
+
 		my $root = $xml->documentElement;
 
 		if( $root->nodeName eq 'ERROR' )

@@ -58,6 +58,7 @@ use File::Copy qw();
 use Text::Wrap qw();
 use LWP::UserAgent;
 use URI;
+use JSON;
 use EPrints::Const qw( :crypt );
 
 my $USE_CRYPT_BLOWFISH = 1;
@@ -148,7 +149,8 @@ sub make_name_string
 	}
 	if( defined $name->{lineage} && $name->{lineage} ne "" )
 	{
-		$secondbit .= " ".$name->{lineage};
+		$secondbit .= " " if $secondbit;
+		$secondbit .= $name->{lineage};
 	}
 
 	if( $firstbit && $secondbit )
@@ -940,6 +942,45 @@ sub clone
 	return $data;			
 }
 
+=item $token = EPrints::Utils::generate_token( [$length] )
+
+Generates a pseudorandom token comprising hexadecimal characters.
+
+The length of the new token is given by the $length parameter; if
+unspecified the default length is 32.
+
+Returns I<undef> if $length is less than 1.
+
+=cut
+
+sub generate_token
+{
+	my( $length ) = @_;
+
+	$length = 32 if !defined $length;
+	if( $length <= 0 )
+	{
+		print STDERR "Unable to generate token: length must be positive ($length given)\n";
+		return undef;
+	}
+
+	# If Session::Token is available, use that to generate the token.
+	if( require_if_exists( 'Session::Token' ) )
+	{
+		return Session::Token->new( length => $length )->get();
+	}
+	# Otherwise, fall back to a simple rand()-based mechanism
+	else
+	{
+		my @a = ();
+		my $n = int( ($length + 1) / 2 );
+		srand;
+		for(1..$n) { push @a, sprintf( '%02X', int rand 256 ); }
+		my $token = join( '', @a );
+		return substr( $token, 0, $length );
+	}
+}
+
 # crypt_password( $value, $session )
 sub crypt_password { &crypt( $_[0] ) }
 
@@ -1360,27 +1401,16 @@ sub mtime
 
 # return a quoted string safe to go in javascript
 
-my %JSON_ESC = (
-	"\b" => "\\b",
-	"\f" => "\\f",
-	"\n" => "\\n",
-	"\r" => "\\r",
-	"\t" => "\\t",
-	"\"" => "\\\"",
-	"\'" => "\\'",
-	"\\" => "\\\\",
-	"\/" => "\\\/",
-);
 sub js_string
 {
 	my( $string ) = @_;
 
 	return 'null' if !defined $string || $string eq '';
 
-	$string =~ s/([\x2f\x22\x5c\n\r\t\f\b])/$JSON_ESC{$1}/g;
-	$string =~ s/([\x00-\x08\x0b\x0e-\x1f])/'\\u00' . unpack('H2', $1)/eg;
-
-	return "\"$string\"";
+	# 'ascii' forces all non-ASCII characters to be quoted, including
+	# simple \uXXXX codepoints and \uAAAA\uBBBB astral surrogates.
+	my $json = JSON->new->ascii->allow_nonref;
+	return $json->encode( "$string" );
 }
 
 # EPrints::Utils::process_parameters( $params, $defaults );
